@@ -1,0 +1,555 @@
+#!/bin/sh
+
+#
+# Intel I350 Thermal Monitor
+# pfSense / FreeBSD
+#
+# Detects Intel I350 devices by PCI vendor/device ID:
+#
+#   Vendor: 0x8086
+#   Device: 0x1521
+#
+# Thermal registers are common to the I350 functions, so one
+# interface per physical adapter is used for the thermal read.
+#
+
+JSON=0
+REQUESTED_IFACE=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -j|--json)
+            JSON=1
+            ;;
+        igb[0-9]*)
+            REQUESTED_IFACE="$1"
+            ;;
+        *)
+            echo "Usage: $0 [-j|--json] [igbX]" >&2
+            exit 1
+            ;;
+    esac
+
+    shift
+done
+
+
+#
+# Return all I350 interfaces.
+#
+# Output:
+#
+# igb0 pci0:1:0:0
+# igb1 pci0:1:0:1
+# igb2 pci0:1:0:2
+# igb3 pci0:1:0:3
+#
+find_i350()
+{
+    pciconf -l | awk '
+    /^igb[0-9]+@/ {
+
+        iface = $1
+        sub(/@.*/, "", iface)
+
+        pci = $1
+        sub(/^[^@]+@/, "", pci)
+        sub(/:$/, "", pci)
+
+        vendor = ""
+        device = ""
+
+        for (i = 1; i <= NF; i++) {
+
+            if ($i ~ /^vendor=/) {
+                vendor = $i
+                sub(/^vendor=/, "", vendor)
+            }
+
+            if ($i ~ /^device=/) {
+                device = $i
+                sub(/^device=/, "", device)
+            }
+        }
+
+        if (vendor == "0x8086" && device == "0x1521") {
+            print iface, pci
+        }
+    }'
+}
+
+
+#
+# Build the list of detected I350 functions.
+#
+I350_LIST=$(find_i350)
+
+
+#
+# If a specific interface was requested, verify that it is actually
+# an I350.
+#
+if [ -n "$REQUESTED_IFACE" ]; then
+
+    FOUND=0
+
+    for ENTRY in $I350_LIST; do
+        if [ "$ENTRY" = "$REQUESTED_IFACE" ]; then
+            FOUND=1
+            break
+        fi
+    done
+
+    if [ "$FOUND" -eq 0 ]; then
+
+        if [ "$JSON" -eq 1 ]; then
+            printf '{"error":"%s is not an Intel I350"}\n' "$REQUESTED_IFACE"
+        else
+            echo "ERROR: $REQUESTED_IFACE is not an Intel I350."
+        fi
+
+        exit 1
+    fi
+fi
+
+
+#
+# No I350 found.
+#
+if [ -z "$I350_LIST" ]; then
+
+    if [ "$JSON" -eq 1 ]; then
+        echo '{"adapters":[],"error":"No Intel I350 adapter found"}'
+    else
+        echo "No Intel I350 adapter found."
+    fi
+
+    exit 1
+fi
+
+
+#
+# Read a 32-bit register from BAR0.
+#
+read_reg()
+{
+    IFACE="$1"
+    OFFSET="$2"
+
+    pciconf -D -b "$IFACE" 0x10 "$OFFSET" 4 2>/dev/null |
+        hexdump -v -e '4/1 "%u "'
+}
+
+
+#
+# Convert four little-endian bytes to a 32-bit integer.
+#
+le32()
+{
+    set -- $1
+
+    if [ "$#" -ne 4 ]; then
+        return 1
+    fi
+
+    echo $(( $1 | ($2 << 8) | ($3 << 16) | ($4 << 24) ))
+}
+
+
+#
+# Convert PCI function address:
+#
+# pci0:1:0:0
+#
+# into physical device:
+#
+# pci0:1:0
+#
+pci_device()
+{
+    PCI="$1"
+
+    echo "$PCI" | sed 's/:[0-9][0-9]*$//'
+}
+
+
+#
+# JSON boolean helper.
+#
+json_bool()
+{
+    if [ "$1" -eq 1 ]; then
+        echo "true"
+    else
+        echo "false"
+    fi
+}
+
+
+#
+# Monitoring status.
+#
+temperature_status()
+{
+    TEMP="$1"
+
+    if [ "$TEMP" -ge 100 ]; then
+        echo "critical"
+    elif [ "$TEMP" -ge 90 ]; then
+        echo "high"
+    elif [ "$TEMP" -ge 80 ]; then
+        echo "warm"
+    else
+        echo "normal"
+    fi
+}
+
+
+#
+# ------------------------------------------------------------
+# Process every physical I350 adapter.
+# ------------------------------------------------------------
+#
+
+ADAPTER_COUNT=0
+
+#
+# We process each unique PCI device.
+#
+PROCESSED=""
+
+#
+# JSON output starts here.
+#
+if [ "$JSON" -eq 1 ]; then
+    printf '{"adapters":['
+fi
+
+FIRST_ADAPTER=1
+
+
+for ENTRY in $I350_LIST; do
+
+    #
+    # ENTRY alternates:
+    #
+    # igb0
+    # pci0:1:0:0
+    # igb1
+    # pci0:1:0:1
+    #
+    # Therefore this loop needs to process pairs.
+    #
+
+    IFACE="$ENTRY"
+
+    # Get corresponding PCI address.
+    # Use pciconf again so the association is unambiguous.
+    PCI=$(pciconf -l | awk -v target="$IFACE" '
+        $1 ~ ("^" target "@") {
+            p=$1
+            sub(/^[^@]+@/, "", p)
+            sub(/:$/, "", p)
+            print p
+            exit
+        }
+    ')
+
+    if [ -z "$PCI" ]; then
+        continue
+    fi
+
+    PHYSICAL=$(pci_device "$PCI")
+
+
+    #
+    # If this physical PCI device was already processed,
+    # skip it.
+    #
+    case " $PROCESSED " in
+        *" $PHYSICAL "*)
+            continue
+            ;;
+    esac
+
+    PROCESSED="$PROCESSED $PHYSICAL"
+    ADAPTER_COUNT=$((ADAPTER_COUNT + 1))
+
+
+    #
+    # Find every interface belonging to this physical I350.
+    #
+    INTERFACES=""
+
+    for OTHER in $I350_LIST; do
+
+        OTHER_PCI=$(pciconf -l | awk -v target="$OTHER" '
+            $1 ~ ("^" target "@") {
+                p=$1
+                sub(/^[^@]+@/, "", p)
+                sub(/:$/, "", p)
+                print p
+                exit
+            }
+        ')
+
+        OTHER_PHYSICAL=$(pci_device "$OTHER_PCI")
+
+        if [ "$OTHER_PHYSICAL" = "$PHYSICAL" ]; then
+            INTERFACES="$INTERFACES $OTHER"
+        fi
+    done
+
+    #
+    # Remove leading whitespace.
+    #
+    INTERFACES=$(echo "$INTERFACES" | sed 's/^ *//')
+
+
+    #
+    # Use the first interface for the thermal registers.
+    #
+    SENSOR_IFACE=$(echo "$INTERFACES" | awk '{print $1}')
+
+
+    #
+    # --------------------------------------------------------
+    # Read THMJT
+    # --------------------------------------------------------
+    #
+
+    BYTES=$(read_reg "$SENSOR_IFACE" 0x8100)
+    THMJT=$(le32 "$BYTES")
+
+    if [ -z "$THMJT" ]; then
+
+        if [ "$JSON" -eq 1 ]; then
+
+            if [ "$FIRST_ADAPTER" -eq 0 ]; then
+                printf ','
+            fi
+
+            printf '{"vendor":"Intel","device":"I350","device_id":"0x1521","pci":"%s","interfaces":[' "$PHYSICAL"
+
+            FIRST_INTERFACE=1
+
+            for INT in $INTERFACES; do
+                if [ "$FIRST_INTERFACE" -eq 0 ]; then
+                    printf ','
+                fi
+                printf '"%s"' "$INT"
+                FIRST_INTERFACE=0
+            done
+
+            printf '],"valid":false,"error":"Unable to read thermal sensor"}'
+
+            FIRST_ADAPTER=0
+
+        else
+            echo
+            echo "Intel I350"
+            echo "PCI device: $PHYSICAL"
+            echo "Interfaces: $INTERFACES"
+            echo "Temperature: INVALID"
+        fi
+
+        continue
+    fi
+
+
+    #
+    # TH_VALID = bit 31
+    #
+    if [ $((THMJT & 0x80000000)) -eq 0 ]; then
+
+        VALID=0
+        TEMP=0
+
+    else
+
+        VALID=1
+
+        TEMP=$((THMJT & 0x1ff))
+
+        #
+        # 9-bit two's complement.
+        #
+        if [ "$TEMP" -ge 256 ]; then
+            TEMP=$((TEMP - 512))
+        fi
+    fi
+
+
+    #
+    # --------------------------------------------------------
+    # THSTAT
+    # --------------------------------------------------------
+    #
+
+    BYTES=$(read_reg "$SENSOR_IFACE" 0x8110)
+    THSTAT=$(le32 "$BYTES")
+
+    #
+    # --------------------------------------------------------
+    # Thresholds
+    # --------------------------------------------------------
+    #
+
+    BYTES=$(read_reg "$SENSOR_IFACE" 0x8104)
+    LOW=$(le32 "$BYTES")
+
+    BYTES=$(read_reg "$SENSOR_IFACE" 0x8108)
+    MID=$(le32 "$BYTES")
+
+    BYTES=$(read_reg "$SENSOR_IFACE" 0x810c)
+    HIGH=$(le32 "$BYTES")
+
+    LOW_TEMP=$((LOW & 0x1ff))
+    MID_TEMP=$((MID & 0x1ff))
+    HIGH_TEMP=$((HIGH & 0x1ff))
+
+
+    #
+    # --------------------------------------------------------
+    # Thermal status bits
+    # --------------------------------------------------------
+    #
+
+    POWER_DOWN=$(( (THSTAT >> 0) & 1 ))
+    THROTTLE=$(( (THSTAT >> 1) & 1 ))
+
+    LOW_EVENT=$(( (THSTAT >> 30) & 1 ))
+    MID_EVENT=$(( (THSTAT >> 22) & 1 ))
+    HIGH_EVENT=$(( (THSTAT >> 14) & 1 ))
+
+
+    STATUS="invalid"
+
+    if [ "$VALID" -eq 1 ]; then
+        STATUS=$(temperature_status "$TEMP")
+    fi
+
+
+    #
+    # --------------------------------------------------------
+    # Human-readable output
+    # --------------------------------------------------------
+    #
+
+    if [ "$JSON" -eq 0 ]; then
+
+        echo
+        echo "Intel I350"
+        echo "--------------------------------"
+        printf 'PCI device:         %s\n' "$PHYSICAL"
+        printf 'Sensor interface:   %s\n' "$SENSOR_IFACE"
+        printf 'Interfaces:         %s\n' "$INTERFACES"
+
+        if [ "$VALID" -eq 1 ]; then
+            printf 'Temperature:        %d °C\n' "$TEMP"
+        else
+            printf 'Temperature:        INVALID\n'
+        fi
+
+        printf 'Status:             %s\n' "$STATUS"
+        printf 'Low threshold:      %d °C\n' "$LOW_TEMP"
+        printf 'Mid threshold:      %d °C\n' "$MID_TEMP"
+        printf 'High threshold:     %d °C\n' "$HIGH_TEMP"
+
+        printf 'Thermal throttle:   %s\n' \
+            "$([ "$THROTTLE" -eq 1 ] && echo YES || echo NO)"
+
+        printf 'Power-down event:   %s\n' \
+            "$([ "$POWER_DOWN" -eq 1 ] && echo YES || echo NO)"
+
+        printf 'Low event:          %s\n' \
+            "$([ "$LOW_EVENT" -eq 1 ] && echo YES || echo NO)"
+
+        printf 'Mid event:          %s\n' \
+            "$([ "$MID_EVENT" -eq 1 ] && echo YES || echo NO)"
+
+        printf 'High event:         %s\n' \
+            "$([ "$HIGH_EVENT" -eq 1 ] && echo YES || echo NO)"
+
+        printf 'THMJT:              0x%08x\n' "$THMJT"
+        printf 'THSTAT:             0x%08x\n' "$THSTAT"
+
+        continue
+    fi
+
+
+    #
+    # --------------------------------------------------------
+    # JSON output
+    # --------------------------------------------------------
+    #
+
+    if [ "$FIRST_ADAPTER" -eq 0 ]; then
+        printf ','
+    fi
+
+    printf '{'
+    printf '"vendor":"Intel",'
+    printf '"device":"I350",'
+    printf '"device_id":"0x1521",'
+    printf '"pci":"%s",' "$PHYSICAL"
+    printf '"sensor_interface":"%s",' "$SENSOR_IFACE"
+
+    printf '"interfaces":['
+
+    FIRST_INTERFACE=1
+
+    for INT in $INTERFACES; do
+
+        if [ "$FIRST_INTERFACE" -eq 0 ]; then
+            printf ','
+        fi
+
+        printf '"%s"' "$INT"
+
+        FIRST_INTERFACE=0
+    done
+
+    printf '],'
+
+    printf '"valid":%s,' "$(json_bool "$VALID")"
+    printf '"temperature":%d,' "$TEMP"
+    printf '"status":"%s",' "$STATUS"
+
+    printf '"thresholds":{'
+    printf '"low":%d,' "$LOW_TEMP"
+    printf '"mid":%d,' "$MID_TEMP"
+    printf '"high":%d' "$HIGH_TEMP"
+    printf '},'
+
+    printf '"thermal_throttle":%s,' "$(json_bool "$THROTTLE")"
+    printf '"power_down":%s,' "$(json_bool "$POWER_DOWN")"
+    printf '"low_event":%s,' "$(json_bool "$LOW_EVENT")"
+    printf '"mid_event":%s,' "$(json_bool "$MID_EVENT")"
+    printf '"high_event":%s' "$(json_bool "$HIGH_EVENT")"
+
+    printf '}'
+
+    FIRST_ADAPTER=0
+
+done
+
+
+#
+# Finish JSON.
+#
+if [ "$JSON" -eq 1 ]; then
+    printf ']'
+    printf ',"adapter_count":%d' "$ADAPTER_COUNT"
+    printf '}\n'
+fi
+
+
+#
+# No adapter successfully processed.
+#
+if [ "$ADAPTER_COUNT" -eq 0 ]; then
+    exit 1
+fi
+
+exit 0

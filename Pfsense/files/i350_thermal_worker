@@ -1,0 +1,86 @@
+#!/bin/sh
+
+cache_file="/var/run/i350-thermal.json"
+reader="/usr/local/bin/i350-thermal"
+
+get_config_value()
+{
+    /usr/local/bin/php -r '
+        require_once("/etc/inc/config.inc");
+
+        $path = $argv[1];
+        $default = $argv[2];
+
+        $value = config_get_path($path, $default);
+
+        if (is_array($value) || is_object($value)) {
+            $value = $default;
+        }
+
+        echo $value;
+    ' "$1" "$2" 2>/dev/null
+}
+
+get_poll_interval()
+{
+    interval=$(get_config_value \
+        "installedpackages/i350thermal/config/0/poll_interval" \
+        "5")
+
+    case "${interval}" in
+        ''|*[!0-9]*)
+            interval=5
+            ;;
+    esac
+
+    [ "${interval}" -lt 1 ] && interval=1
+    [ "${interval}" -gt 60 ] && interval=60
+
+    echo "${interval}"
+}
+
+get_enabled()
+{
+    enabled=$(get_config_value \
+        "installedpackages/i350thermal/config/0/enable" \
+        "1")
+
+    case "${enabled}" in
+        1|yes|on|true)
+            echo 1
+            ;;
+        *)
+            echo 0
+            ;;
+    esac
+}
+
+trap 'rm -f "${tmp_file}"; exit 0' TERM INT HUP
+
+while :; do
+
+    if [ "$(get_enabled)" != "1" ]; then
+        rm -f "${cache_file}"
+        sleep 5
+        continue
+    fi
+
+    interval="$(get_poll_interval)"
+
+    tmp_file="${cache_file}.$$"
+
+    if "${reader}" --json > "${tmp_file}" 2>/dev/null; then
+
+        if [ -s "${tmp_file}" ]; then
+            mv -f "${tmp_file}" "${cache_file}"
+        else
+            rm -f "${tmp_file}"
+        fi
+
+    else
+        rm -f "${tmp_file}"
+    fi
+
+    sleep "${interval}"
+
+done
