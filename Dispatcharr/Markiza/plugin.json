@@ -1,0 +1,385 @@
+{
+"name": "Markíza",
+"version": "0.6.2",
+"description": "TN Live and Markíza HLS proxies with XMLTV TV guide",
+"author": "Scroll_DP",
+"fields": [
+{
+"id": "channel_id",
+"label": "TN Live Channel ID",
+"type": "string",
+"default": "DsGMde5p69Z"
+},
+{
+"id": "quality",
+"label": "TN Live Quality",
+"type": "select",
+"default": "fullhd",
+"options": [
+{
+"value": "lq",
+"label": "LQ - 640x360"
+},
+{
+"value": "mq",
+"label": "MQ - 768x432"
+},
+{
+"value": "hq",
+"label": "HQ - 1024x576"
+},
+{
+"value": "hd",
+"label": "HD - 1280x720"
+},
+{
+"value": "fullhd",
+"label": "Full HD - 1920x1080"
+}
+]
+},
+{
+"id": "xmltv_api_url",
+"label": "XMLTV API URL",
+"type": "string",
+"default": "https://tnlive.sk/api/v1/tnlive/program?channel_id=48"
+},
+{
+"id": "xmltv_channel_id",
+"label": "XMLTV Channel ID",
+"type": "string",
+"default": "tnlive"
+},
+{
+"id": "xmltv_channel_name",
+"label": "XMLTV Channel Name",
+"type": "string",
+"default": "TN Live"
+},
+{
+"id": "xmltv_port",
+"label": "XMLTV Port",
+"type": "number",
+"default": 8766
+},
+{
+"id": "xmltv_refresh",
+"label": "XMLTV Refresh",
+"type": "number",
+"default": 300
+},
+{
+"id": "markiza_xmltv_port",
+"label": "Markíza XMLTV Port",
+"type": "number",
+"default": 8770
+},
+{
+"id": "markiza_xmltv_refresh",
+"label": "Markíza XMLTV Refresh",
+"type": "number",
+"default": 300
+},
+{
+"id": "markiza_quality",
+"label": "Markíza Quality",
+"type": "select",
+"default": "hq",
+"options": [
+{
+"value": "lq",
+"label": "LQ - 640x360"
+},
+{
+"value": "mq",
+"label": "MQ - 768x432"
+},
+{
+"value": "hq",
+"label": "HQ - 1024x576"
+},
+{
+"value": "hd",
+"label": "HD - 1280x720"
+},
+{
+"value": "fullhd",
+"label": "Full HD - 1920x1080"
+}
+]
+},
+{
+"id": "dajto_quality",
+"label": "Dajto Quality",
+"type": "select",
+"default": "hq",
+"options": [
+{
+"value": "lq",
+"label": "LQ - 640x360"
+},
+{
+"value": "mq",
+"label": "MQ - 768x432"
+},
+{
+"value": "hq",
+"label": "HQ - 1024x576"
+},
+{
+"value": "hd",
+"label": "HD - 1280x720"
+},
+{
+"value": "fullhd",
+"label": "Full HD - 1920x1080"
+}
+]
+},
+{
+"id": "krimi_quality",
+"label": "Krimi Quality",
+"type": "select",
+"default": "hq",
+"options": [
+{
+"value": "lq",
+"label": "LQ - 640x360"
+},
+{
+"value": "mq",
+"label": "MQ - 768x432"
+},
+{
+"value": "hq",
+"label": "HQ - 1024x576"
+},
+{
+"value": "hd",
+"label": "HD - 1280x720"
+},
+{
+"value": "fullhd",
+"label": "Full HD - 1920x1080"
+}
+]
+},
+{
+"id": "doma_quality",
+"label": "Doma Quality",
+"type": "select",
+"default": "hq",
+"options": [
+{
+"value": "lq",
+"label": "LQ - 640x360"
+},
+{
+"value": "mq",
+"label": "MQ - 768x432"
+},
+{
+"value": "hq",
+"label": "HQ - 1024x576"
+},
+{
+"value": "hd",
+"label": "HD - 1280x720"
+},
+{
+"value": "fullhd",
+"label": "Full HD - 1920x1080"
+}
+]
+},
+{
+"id": "klasik_quality",
+"label": "Klasik Quality",
+"type": "select",
+"default": "hq",
+"options": [
+{
+"value": "lq",
+"label": "LQ - 640x360"
+},
+{
+"value": "mq",
+"label": "MQ - 768x432"
+},
+{
+"value": "hq",
+"label": "HQ - 1024x576"
+},
+{
+"value": "hd",
+"label": "HD - 1280x720"
+},
+{
+"value": "fullhd",
+"label": "Full HD - 1920x1080"
+}
+]
+},
+{
+"id": "ports_info",
+"label": "Proxy Ports",
+"type": "info",
+"description": "TN Live: 8765 | TN Live XMLTV: 8766 | Markíza HLS (5 channels): 8763 | Markíza XMLTV: 8770"
+}
+],
+"actions": [
+{
+"id": "apply",
+"label": "Apply Settings",
+"description": "Apply the current plugin settings.",
+"button_label": "Apply",
+"button_variant": "filled",
+"button_color": "blue"
+},
+{
+"id": "test_resolver",
+"label": "Test TN Live Resolver",
+"description": "Resolve the current TN Live stream.",
+"button_label": "Test",
+"button_variant": "outline",
+"button_color": "blue"
+},
+{
+"id": "start_proxy",
+"label": "Start TN Live",
+"button_label": "Start",
+"button_variant": "outline",
+"button_color": "green"
+},
+{
+"id": "stop_proxy",
+"label": "Stop TN Live",
+"button_label": "Stop",
+"button_variant": "outline",
+"button_color": "red"
+},
+{
+"id": "restart_proxy",
+"label": "Restart TN Live",
+"button_label": "Restart",
+"button_variant": "outline",
+"button_color": "orange"
+},
+{
+"id": "proxy_status",
+"label": "TN Live Status",
+"button_label": "Status",
+"button_variant": "outline",
+"button_color": "blue"
+},
+{
+"id": "start_xmltv",
+"label": "Start XMLTV",
+"button_label": "Start",
+"button_variant": "outline",
+"button_color": "green"
+},
+{
+"id": "stop_xmltv",
+"label": "Stop XMLTV",
+"button_label": "Stop",
+"button_variant": "outline",
+"button_color": "red"
+},
+{
+"id": "restart_xmltv",
+"label": "Restart XMLTV",
+"button_label": "Restart",
+"button_variant": "outline",
+"button_color": "orange"
+},
+{
+"id": "xmltv_status",
+"label": "XMLTV Status",
+"button_label": "Status",
+"button_variant": "outline",
+"button_color": "blue"
+},
+{
+"id": "test_xmltv",
+"label": "Test XMLTV",
+"button_label": "Test",
+"button_variant": "outline",
+"button_color": "blue"
+},
+{
+"id": "refresh_xmltv",
+"label": "Refresh XMLTV",
+"button_label": "Refresh",
+"button_variant": "outline",
+"button_color": "blue"
+},
+{
+"id": "start_markiza",
+"label": "Start Markíza HLS",
+"description": "Start the unified Markíza HLS proxy for all five channels.",
+"button_label": "Start",
+"button_variant": "outline",
+"button_color": "green"
+},
+{
+"id": "stop_markiza",
+"label": "Stop Markíza HLS",
+"description": "Stop the unified Markíza HLS proxy.",
+"button_label": "Stop",
+"button_variant": "outline",
+"button_color": "red"
+},
+{
+"id": "restart_markiza",
+"label": "Restart Markíza HLS",
+"description": "Restart the unified Markíza HLS proxy.",
+"button_label": "Restart",
+"button_variant": "outline",
+"button_color": "orange"
+},
+{
+"id": "markiza_status",
+"label": "Markíza HLS Status",
+"description": "Show the status of the unified Markíza HLS proxy.",
+"button_label": "Status",
+"button_variant": "outline",
+"button_color": "blue"
+},
+{
+"id": "start_markiza_xmltv",
+"label": "Start Markíza XMLTV",
+"button_label": "Start",
+"button_variant": "outline",
+"button_color": "green"
+},
+{
+"id": "stop_markiza_xmltv",
+"label": "Stop Markíza XMLTV",
+"button_label": "Stop",
+"button_variant": "outline",
+"button_color": "red"
+},
+{
+"id": "restart_markiza_xmltv",
+"label": "Restart Markíza XMLTV",
+"button_label": "Restart",
+"button_variant": "outline",
+"button_color": "orange"
+},
+{
+"id": "markiza_xmltv_status",
+"label": "Markíza XMLTV Status",
+"button_label": "Status",
+"button_variant": "outline",
+"button_color": "blue"
+},
+{
+"id": "refresh_markiza_xmltv",
+"label": "Refresh Markíza XMLTV",
+"button_label": "Refresh",
+"button_variant": "outline",
+"button_color": "blue"
+}
+]
+}
