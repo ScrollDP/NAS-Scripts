@@ -3,6 +3,7 @@
 # Script used for unprivileged LXC containers.
 # Podman + crun, automatic updates, persistent volumes,
 # automatic Nextcloud data-directory detection, and install/update/reinstall/uninstall.
+# version: 3
 
 true
 SCRIPT_NAME="EuroOffice (Podman)"
@@ -24,6 +25,13 @@ EUROOFFICE_CONTAINER="eurooffice"
 EUROOFFICE_RUNTIME="/usr/bin/crun"
 EUROOFFICE_JWT_HEADER="AuthorizationJwt"
 EUROOFFICE_DEFAULT_PORT=9980
+
+# postgres databse configuration
+EUROOFFICE_DB_HOST=""
+EUROOFFICE_DB_PORT="5432"
+EUROOFFICE_DB_NAME=""
+EUROOFFICE_DB_USER=""
+EUROOFFICE_DB_PASSWORD=""
 
 # These are discovered at runtime. No settings file is used.
 EUROOFFICE_DATA_DIR=""
@@ -410,6 +418,92 @@ Please run the configuration again and choose No to enter it manually."
     EUROOFFICE_PUBLIC_URL="https://${office_host}/"
 }
 
+
+# --------------------------------------------------
+# PostgreSQL configuration
+# --------------------------------------------------
+
+configure_database() {
+    local current_env=""
+    local input_value
+
+    # Reuse the existing container's PostgreSQL settings as defaults.
+    if podman_container_exists "$EUROOFFICE_CONTAINER"; then
+        current_env="$(podman_crun inspect "$EUROOFFICE_CONTAINER" \
+            --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)"
+
+        EUROOFFICE_DB_HOST="$(printf '%s\n' "$current_env" | sed -n 's/^DB_HOST=//p' | head -n1)"
+        EUROOFFICE_DB_PORT="$(printf '%s\n' "$current_env" | sed -n 's/^DB_PORT=//p' | head -n1)"
+        EUROOFFICE_DB_NAME="$(printf '%s\n' "$current_env" | sed -n 's/^DB_NAME=//p' | head -n1)"
+        EUROOFFICE_DB_USER="$(printf '%s\n' "$current_env" | sed -n 's/^DB_USER=//p' | head -n1)"
+        EUROOFFICE_DB_PASSWORD="$(printf '%s\n' "$current_env" | sed -n 's/^DB_PWD=//p' | head -n1)"
+    fi
+
+    EUROOFFICE_DB_PORT="${EUROOFFICE_DB_PORT:-5432}"
+
+    while true; do
+        input_value="$(input_box_flow \
+            "PostgreSQL server hostname or IPv4 address." \
+            "$EUROOFFICE_DB_HOST")"
+        [ -n "$input_value" ] && EUROOFFICE_DB_HOST="$input_value"
+
+        if [ -n "$EUROOFFICE_DB_HOST" ]; then
+            break
+        fi
+        msg_box "PostgreSQL host cannot be empty."
+    done
+
+    while true; do
+        input_value="$(input_box_flow \
+            "PostgreSQL server port." \
+            "$EUROOFFICE_DB_PORT")"
+        [ -n "$input_value" ] && EUROOFFICE_DB_PORT="$input_value"
+
+        if [[ "$EUROOFFICE_DB_PORT" =~ ^[0-9]+$ ]] &&
+           [ "$EUROOFFICE_DB_PORT" -ge 1 ] &&
+           [ "$EUROOFFICE_DB_PORT" -le 65535 ]; then
+            break
+        fi
+        msg_box "Invalid PostgreSQL port."
+    done
+
+    input_value="$(input_box_flow \
+        "PostgreSQL database name." \
+        "$EUROOFFICE_DB_NAME")"
+    [ -n "$input_value" ] && EUROOFFICE_DB_NAME="$input_value"
+
+    input_value="$(input_box_flow \
+        "PostgreSQL username." \
+        "$EUROOFFICE_DB_USER")"
+    [ -n "$input_value" ] && EUROOFFICE_DB_USER="$input_value"
+
+    # Password should be entered through a masked dialog.
+    if command -v whiptail >/dev/null 2>&1; then
+        EUROOFFICE_DB_PASSWORD="$(whiptail \
+            --title "PostgreSQL configuration" \
+            --passwordbox "PostgreSQL password:" \
+            10 72 "$EUROOFFICE_DB_PASSWORD" 3>&1 1>&2 2>&3)" || return 1
+    elif command -v dialog >/dev/null 2>&1; then
+        EUROOFFICE_DB_PASSWORD="$(dialog \
+            --title "PostgreSQL configuration" \
+            --insecure --passwordbox "PostgreSQL password:" \
+            10 72 3>&1 1>&2 2>&3)" || return 1
+    else
+        msg_box "Neither whiptail nor dialog is available."
+        return 1
+    fi
+
+    if [ -z "$EUROOFFICE_DB_NAME" ] ||
+       [ -z "$EUROOFFICE_DB_USER" ] ||
+       [ -z "$EUROOFFICE_DB_PASSWORD" ]; then
+        msg_box "Database name, username and password cannot be empty."
+        return 1
+    fi
+
+    return 0
+}
+
+
 # --------------------------------------------------
 # Persistent volume preparation
 # --------------------------------------------------
@@ -421,7 +515,6 @@ prepare_eurooffice_volumes() {
 
     mkdir -p \
         "$base_dir/data" \
-        "$base_dir/config" \
         "$base_dir/runtime" || {
             echo "ERROR: Failed to create EuroOffice directories."
             return 1
@@ -434,28 +527,9 @@ prepare_eurooffice_volumes() {
 
     chmod 755 "$base_dir/data" || return 1
     chmod 2775 "$base_dir/runtime" || return 1
-    chmod 755 "$base_dir/config" || return 1
 
-    # Initialize configuration from the image on a fresh installation.
-    # Existing configuration is never overwritten.
-    if [ ! -s "$base_dir/config/local.json" ]; then
-        print_text_in_color "$ICyan" \
-            "Initializing EuroOffice configuration from the image..."
 
-        podman_crun run --rm \
-            --entrypoint /bin/sh \
-            -v "$base_dir/config:/host-config" \
-            "$EUROOFFICE_IMAGE" \
-            -c 'cp -an /etc/euro-office/documentserver/. /host-config/' || {
-                echo "ERROR: Failed to initialize EuroOffice configuration."
-                return 1
-            }
-    fi
 
-    if [ ! -s "$base_dir/config/local.json" ]; then
-        echo "ERROR: local.json is missing or empty."
-        return 1
-    fi
 
     print_text_in_color "$IGreen" "Persistent volumes prepared."
 }
@@ -528,6 +602,7 @@ if [ -z "$DETECTED_IP" ]; then
 fi
 
 configure_network "$DETECTED_IP" || exit 1
+configure_database || exit 1
 
 # --------------------------------------------------
 # Check Nextcloud
@@ -615,6 +690,23 @@ else
     if ! printf '%s\n' "$CURRENT_PORTS" | grep -Fxq "$EXPECTED_PORT"; then
         RECREATE_CONTAINER=true
     fi
+    for db_var in DB_HOST DB_PORT DB_NAME DB_USER DB_PWD; do
+        current_value="$(printf '%s\n' "$CURRENT_ENV" |
+            sed -n "s/^${db_var}=//p" | head -n1)"
+
+        case "$db_var" in
+            DB_HOST) expected_value="$EUROOFFICE_DB_HOST" ;;
+            DB_PORT) expected_value="$EUROOFFICE_DB_PORT" ;;
+            DB_NAME) expected_value="$EUROOFFICE_DB_NAME" ;;
+            DB_USER) expected_value="$EUROOFFICE_DB_USER" ;;
+            DB_PWD) expected_value="$EUROOFFICE_DB_PASSWORD" ;;
+        esac
+
+        if [ "$current_value" != "$expected_value" ]; then
+            RECREATE_CONTAINER=true
+            break
+        fi
+    done
 
     if ! printf '%s\n' "$CURRENT_ENV" | grep -Fqx "JWT_SECRET=${EUROOFFICE_SECRET}"; then
         RECREATE_CONTAINER=true
@@ -633,15 +725,16 @@ else
     CURRENT_MOUNTS="$(podman_crun inspect "$EUROOFFICE_CONTAINER" \
         --format '{{range .Mounts}}{{println .Source "=>" .Destination}}{{end}}' 2>/dev/null)"
     if ! printf '%s\n' "$CURRENT_MOUNTS" |
-        grep -Fq "${EUROOFFICE_DATA_DIR}/data => /var/lib/euro-office/documentserver"; then
-        RECREATE_CONTAINER=true
-    fi
-    if ! printf '%s\n' "$CURRENT_MOUNTS" |
         grep -Fq "${EUROOFFICE_DATA_DIR}/config => /etc/euro-office/documentserver"; then
         RECREATE_CONTAINER=true
     fi
     if ! printf '%s\n' "$CURRENT_MOUNTS" |
         grep -Fq "${EUROOFFICE_DATA_DIR}/runtime => /var/www/euro-office/Data"; then
+        RECREATE_CONTAINER=true
+    fi
+    # Recreate legacy containers that mount the image configuration directory.
+    if printf '%s\n' "$CURRENT_MOUNTS" |
+        grep -Fq '=> /etc/euro-office/documentserver'; then
         RECREATE_CONTAINER=true
     fi
 fi
@@ -671,11 +764,16 @@ if [ "$RECREATE_CONTAINER" = true ]; then
         --name "$EUROOFFICE_CONTAINER" \
         -p "${EUROOFFICE_BIND_IP}:${EUROOFFICE_PORT}:80" \
         -v "${EUROOFFICE_DATA_DIR}/data:/var/lib/euro-office/documentserver" \
-        -v "${EUROOFFICE_DATA_DIR}/config:/etc/euro-office/documentserver" \
         -v "${EUROOFFICE_DATA_DIR}/runtime:/var/www/euro-office/Data" \
         -e JWT_ENABLED=true \
         -e JWT_HEADER="$EUROOFFICE_JWT_HEADER" \
         -e JWT_SECRET="$EUROOFFICE_SECRET" \
+        -e DB_TYPE=postgres \
+        -e DB_HOST="$EUROOFFICE_DB_HOST" \
+        -e DB_PORT="$EUROOFFICE_DB_PORT" \
+        -e DB_NAME="$EUROOFFICE_DB_NAME" \
+        -e DB_USER="$EUROOFFICE_DB_USER" \
+        -e DB_PWD="$EUROOFFICE_DB_PASSWORD" \
         --restart=always \
         "$EUROOFFICE_IMAGE"; then
         msg_box "EuroOffice container failed to start. Check Podman logs."
